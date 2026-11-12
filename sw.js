@@ -1,5 +1,5 @@
 // マルシェレジ：オフライン用キャッシュ（アプリを更新したら VERSION を変える）
-var VERSION = 'marche-reg-v1';
+var VERSION = 'marche-reg-v2';
 var FILES = ['./', './index.html', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));

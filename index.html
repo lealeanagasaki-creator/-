@@ -262,9 +262,11 @@ function cartCalc() {
 
 /* ---------- 会計確定 ---------- */
 function nextId() {
-  var d = new Date(), ymd = d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2) + ('0' + d.getDate()).slice(-2);
-  var seq = LS.get('seq', {}); seq[ymd] = (seq[ymd] || 0) + 1; LS.set('seq', seq);
-  return (S.cfg.device || 'A') + '-' + ymd + '-' + ('000' + seq[ymd]).slice(-4);
+  var d = new Date(), p = function (n) { return ('0' + n).slice(-2); };
+  var ymd = d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()), hms = p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  var cs = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', rnd = '';
+  for (var i = 0; i < 3; i++) rnd += cs.charAt(Math.floor(Math.random() * cs.length));
+  return (S.cfg.device || 'A') + '-' + ymd + '-' + hms + '-' + rnd;   /* 例 A-20261112-152301-K7Q（保存場所が変わっても重ならない） */
 }
 function checkout() {
   if (!S.cart.length) return;
@@ -341,14 +343,22 @@ function send(manual) {
   return fetch(S.cfg.url, { method: 'POST', body: body }).then(function (r) { return r.json(); }).then(function (res) {
     if (!res.ok) throw new Error(res.error || '送信エラー');
     var map = {}; res.results.forEach(function (x) { map[x.id] = x; });
-    var ng = 0;
+    var ng = 0, reissued = 0;
     S.records.forEach(function (r) {
       var x = map[r.id]; if (!x) return;
-      if (x.ok) { r.status = 'sent'; r.sentAt = new Date().toISOString(); delete r.error; } else { r.status = 'error'; r.error = x.error; ng++; }
+      if (x.ok) { r.status = 'sent'; r.sentAt = new Date().toISOString(); delete r.error; }
+      else if (x.conflict && r.type === 'sale') {
+        var old = r.id; r.id = nextId(); r.status = 'pending'; r.reissuedFrom = old; delete r.error; reissued++;
+        S.records.forEach(function (c) { if (c.type === 'cancel' && c.target === old) { c.target = r.id; c.status = 'pending'; } });
+      }
+      else { r.status = 'error'; r.error = x.error; ng++; }
     });
     saveRecords();
+    if (reissued && !S.retried) { S.retried = true; S.sending = false; return send(manual); }
+    S.retried = false;
     if (manual || ng) toast(ng ? '送信しました（エラー ' + ng + ' 件・履歴を確認）' : '送信しました');
   }).catch(function (e) {
+    S.retried = false;
     if (manual) alert('送信できませんでした（' + e.message + '）。ネットにつながってから、もう一度送信してください。データはiPadに残っています。');
   }).then(function () { S.sending = false; render(); });
 }
@@ -486,7 +496,16 @@ function settingsView(first) {
       (S.master.event ? '<button class="primary big" style="width:100%" onclick="S.view=\'reg\';render()">レジを開く</button>' : '') : '') +
     '</div><div class="card"><b>未送信データ（' + pend.length + '件）</b><p class="muted">ネットにつながらず送信できないときは、書き出してスプレッドシートのメニュー「iPadの書き出しデータを取り込む」に貼り付けます。</p>' +
     '<button onclick="exportData()">未送信データを書き出す</button> <button class="danger" onclick="clearSent()">送信済みの記録を整理</button>' +
+    (S.master && S.master.event ? '<p class="muted" style="margin-top:12px">スプレッドシートに反映されていない会計があるときは、ネットにつないで下のボタンを押します。届いている会計は二重に記録されません。</p>' +
+      '<button class="primary" onclick="resendEvent()">このイベントの記録を再送信</button>' : '') +
     '<textarea id="ex" style="height:120px;margin-top:8px;display:' + (S.exported ? 'block' : 'none') + '">' + esc(S.exported || '') + '</textarea></div></div>';
+}
+function resendEvent() {
+  var ev = S.master.event.id, n = 0;
+  S.records.forEach(function (r) { if (r.eventId === ev && r.status === 'sent') { r.status = 'pending'; n++; } });
+  saveRecords(); render();
+  if (!n) { toast('再送信する記録はありません'); return; }
+  send(true);
 }
 function saveCfg() {
   S.cfg = { url: document.getElementById('cu').value.trim(), token: document.getElementById('ct').value.trim(), device: (document.getElementById('cd').value.trim() || 'A') };
