@@ -35,6 +35,8 @@ main{flex:1;min-height:0}
 .grid{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px;align-content:start;-webkit-overflow-scrolling:touch;padding-bottom:20px}
 .tile{position:relative;text-align:left;padding:10px 10px 8px;min-height:92px;border-left:8px solid #CBD5E1;display:flex;flex-direction:column;justify-content:space-between}
 .tile .nm{font-size:15px;font-weight:600;line-height:1.3}
+.tile .au{font-size:12px;color:#64748B;margin-top:2px}
+.seg{display:flex;flex-shrink:0}.seg button{border-radius:0;padding:10px 12px;font-size:14px}.seg button:first-child{border-radius:10px 0 0 10px}.seg button:last-child{border-radius:0 10px 10px 0;border-left:0}.seg button.on{background:#1F4E78;color:#fff;border-color:#1F4E78}
 .tile .ft{display:flex;justify-content:space-between;font-size:14px;color:#475569;margin-top:6px}
 .tile .low{color:#B91C1C;font-weight:700}
 .tile.set{background:#EFF6FF;border-color:#93C5FD}
@@ -174,7 +176,7 @@ var LS = {
   set: function (k, v) { localStorage.setItem('mr_' + k, JSON.stringify(v)); }
 };
 var S = {
-  view: 'reg', cat: 'すべて', q: '', cart: [], txDisc: 0, cash: null, builder: null,
+  view: 'reg', cat: 'すべて', author: 'すべて', bf: 'すべて', mode: LS.get('mode', 'cat'), q: '', cart: [], txDisc: 0, cash: null, builder: null,
   cfg: LS.get('cfg', { url: '', token: '', device: 'A' }),
   master: LS.get('master', null),
   records: LS.get('records', []),
@@ -225,7 +227,7 @@ function startSet(p) {
     render(); return;
   }
   S.builder = { set: p, fixed: fixed, slots: p.slots.map(function (s) { return { cat: s.cat, qty: s.qty, n: 0 }; }), picked: [] };
-  S.prevCat = S.cat; S.cat = 'すべて'; S.q = '';
+  S.bf = 'すべて'; S.q = '';
   render();
 }
 function builderLeft() { return S.builder.slots.reduce(function (a, s) { return a + s.qty - s.n; }, 0); }
@@ -239,11 +241,11 @@ function pickForSet(p) {
   if (builderLeft() === 0) {
     var b = S.builder;
     S.cart.push({ code: b.set.code, name: b.set.name, qty: 1, unit: b.set.price, disc: 0, comps: b.fixed.concat(b.picked) });
-    S.builder = null; S.cat = S.prevCat || 'すべて';
+    S.builder = null; S.bf = 'すべて';
   }
   render();
 }
-function cancelBuilder() { S.builder = null; S.cat = S.prevCat || 'すべて'; render(); }
+function cancelBuilder() { S.builder = null; S.bf = 'すべて'; render(); }
 function changeQty(i, d) {
   var it = S.cart[i];
   if (it.comps && !it.fixed) return;
@@ -409,33 +411,58 @@ function render() {
 }
 function regView() {
   if (S.master.event.status === '締め済') return '<div class="page"><div class="card err">このイベントは締め済です。設定で商品データを更新してください。</div></div>';
-  var prods = S.master.products;
-  var cats = ['すべて', 'セット'].concat(S.master.categories.filter(function (c) { return prods.some(function (p) { return p.cat === c && p.type !== 'セット'; }); }));
   var h = '<div class="reg"><div class="left">';
   if (S.builder) h += '<div class="builder"><div style="flex:1"><b>' + esc(S.builder.set.name) + '：あと ' + builderLeft() + ' 点えらんでください</b><div class="muted">' +
     S.builder.slots.map(function (s) { return esc(s.cat) + ' ' + s.n + '/' + s.qty; }).join('　') +
     (S.builder.picked.length ? '　選択済：' + S.builder.picked.map(function (x) { return esc(x.name); }).join('、') : '') + '</div></div>' +
     '<button onclick="cancelBuilder()">やめる</button></div>';
-  h += '<input id="q" placeholder="商品名で検索（例：うさぎ）" value="' + esc(S.q) + '" oninput="S.q=this.value;renderGrid()">';
-  if (!S.builder) h += '<div class="chips">' + cats.map(function (c) {
-    return '<button class="chip ' + (S.cat === c ? 'on' : '') + '" onclick="S.cat=\'' + esc(c) + '\';S.q=\'\';render()">' + esc(c) + '</button>'; }).join('') + '</div>';
+  h += '<div style="display:flex;gap:8px;align-items:center"><input id="q" placeholder="商品名・作家名で検索（例：うさぎ）" value="' + esc(S.q) + '" oninput="S.q=this.value;renderGrid()" style="flex:1">' +
+    '<span class="seg"><button class="' + (S.mode === 'cat' ? 'on' : '') + '" onclick="setMode(\'cat\')">カテゴリー別</button>' +
+    '<button class="' + (S.mode === 'author' ? 'on' : '') + '" onclick="setMode(\'author\')">作家別</button></span></div>';
+  var chips = chipList(), cur = chipCurrent();
+  if (chips.length > 1) h += '<div class="chips">' + chips.map(function (c) {
+    return '<button class="chip ' + (cur === c ? 'on' : '') + '" data-v="' + esc(c) + '" onclick="pickChip(this.getAttribute(\'data-v\'))">' + esc(c) + '</button>'; }).join('') + '</div>';
   h += '<div class="grid" id="grid">' + gridHtml() + '</div></div>';
   return h + cartHtml();
 }
+function setMode(m) { S.mode = m; LS.set('mode', m); S.cat = 'すべて'; S.author = 'すべて'; S.bf = 'すべて'; render(); }
+function uniq(arr) { var o = []; arr.forEach(function (x) { if (x && o.indexOf(x) < 0) o.push(x); }); return o; }
+function authorOrder() { return S.master.authors || uniq(S.master.products.map(function (p) { return p.author; })); }
+function chipList() {
+  var prods = S.master.products;
+  if (S.builder) {
+    var el = prods.filter(function (p) { return p.type !== 'セット' && eligibleCats().indexOf(p.cat) >= 0; });
+    if (S.mode === 'author') return ['すべて'].concat(authorOrder().filter(function (a) { return el.some(function (p) { return p.author === a; }); }));
+    return ['すべて'].concat(eligibleCats());
+  }
+  if (S.mode === 'author') return ['すべて', 'セット'].concat(authorOrder().filter(function (a) { return prods.some(function (p) { return p.author === a && p.type !== 'セット'; }); }));
+  return ['すべて', 'セット'].concat(S.master.categories.filter(function (c) { return prods.some(function (p) { return p.cat === c && p.type !== 'セット'; }); }));
+}
+function chipCurrent() { return S.builder ? (S.bf || 'すべて') : (S.mode === 'author' ? (S.author || 'すべて') : S.cat); }
+function pickChip(v) {
+  if (S.builder) S.bf = v; else if (S.mode === 'author') S.author = v; else S.cat = v;
+  S.q = ''; render();
+}
 function gridHtml() {
-  var prods = S.master.products, sold = soldSince(), q = normKana(S.q);
+  var prods = S.master.products, sold = soldSince(), q = normKana(S.q), cur = chipCurrent();
   var list = prods.filter(function (p) {
-    if (S.builder) { if (p.type === 'セット' || eligibleCats().indexOf(p.cat) < 0) return false; }
-    else if (S.cat === 'セット') { if (p.type !== 'セット') return false; }
-    else if (S.cat !== 'すべて' && p.cat !== S.cat) return false;
-    return !q || normKana(p.name + ' ' + p.code + ' ' + p.cat).indexOf(q) >= 0;
+    if (S.builder) {
+      if (p.type === 'セット' || eligibleCats().indexOf(p.cat) < 0) return false;
+      if (cur !== 'すべて' && (S.mode === 'author' ? p.author : p.cat) !== cur) return false;
+    } else if (cur === 'セット') { if (p.type !== 'セット') return false; }
+    else if (cur !== 'すべて') {
+      if (p.type === 'セット') return false;
+      if ((S.mode === 'author' ? p.author : p.cat) !== cur) return false;
+    }
+    return !q || normKana(p.name + ' ' + p.code + ' ' + p.cat + ' ' + (p.author || '')).indexOf(q) >= 0;
   });
-  if (!S.builder && S.cat === 'すべて' && !q) list = list.slice().sort(function (a, b) { return (a.type === 'セット' ? 0 : 1) - (b.type === 'セット' ? 0 : 1); });
+  if (!S.builder && cur === 'すべて' && !q) list = list.slice().sort(function (a, b) { return (a.type === 'セット' ? 0 : 1) - (b.type === 'セット' ? 0 : 1); });
   return (list.length ? list.map(function (p) {
     var isSet = p.type === 'セット';
     var left = isSet ? null : p.stock - (sold[p.code] || 0);
     return '<button class="tile ' + (isSet ? 'set' : '') + '" style="' + (isSet ? '' : 'border-left-color:' + catColor(p.cat)) + '" onclick="tapProduct(\'' + esc(p.code) + '\')">' +
       (isSet ? '<span class="tag">セット</span>' : '') + '<span class="nm">' + esc(p.name) + '</span>' +
+      (p.author ? '<span class="au">作：' + esc(p.author) + '</span>' : '') +
       '<span class="ft"><span>' + yen(p.price) + '</span>' + (isSet ? '' : '<span class="' + (left <= 1 ? 'low' : '') + '">残' + left + '</span>') + '</span></button>';
   }).join('') : '<div class="empty">該当する商品がありません</div>');
 }
